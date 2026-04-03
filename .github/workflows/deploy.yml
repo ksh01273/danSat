@@ -1,0 +1,65 @@
+name: Deploy DanSat
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, DanSat]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # --- Frontend Build ---
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Deploy frontend
+        run: |
+          sudo rm -rf /var/www/danSat/dist/*
+          sudo cp -r frontend/dist/* /var/www/danSat/dist/
+
+      # --- Backend Deploy ---
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --production
+
+      - name: Deploy backend
+        run: |
+          sudo rm -rf /var/www/danSat/backend/node_modules /var/www/danSat/backend/src
+          sudo cp -r backend/package*.json backend/src /var/www/danSat/backend/
+          sudo cp -r backend/node_modules /var/www/danSat/backend/
+
+      - name: Create .env.production
+        run: |
+          sudo cat > /var/www/danSat/backend/.env.production <<EOF
+          PORT=3009
+          DB_HOST=192.168.10.55
+          DB_PORT=5432
+          DB_NAME=dansat
+          DB_USER=dangam_mcp_user
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          NODE_ENV=production
+          EOF
+
+      - name: Validate .env exists
+        run: |
+          /usr/local/bin/validate-env.sh /var/www/danSat/backend PORT DB_HOST DB_NAME
+
+      - name: Restart PM2
+        run: |
+          cd /var/www/danSat/backend
+          pm2 restart dansat-api --update-env || pm2 start src/index.js --name dansat-api --env production
+          pm2 save
