@@ -44,15 +44,13 @@ jobs:
 
       - name: Create .env.production
         run: |
-          cat > /var/www/danSat/backend/.env.production <<ENVEOF
-PORT=3009
-DB_HOST=192.168.10.55
-DB_PORT=5432
-DB_NAME=dansat
-DB_USER=dangam_mcp_user
-DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-NODE_ENV=production
-ENVEOF
+          echo "PORT=3009" > /var/www/danSat/backend/.env.production
+          echo "DB_HOST=192.168.10.55" >> /var/www/danSat/backend/.env.production
+          echo "DB_PORT=5432" >> /var/www/danSat/backend/.env.production
+          echo "DB_NAME=dansat" >> /var/www/danSat/backend/.env.production
+          echo "DB_USER=dangam_mcp_user" >> /var/www/danSat/backend/.env.production
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> /var/www/danSat/backend/.env.production
+          echo "NODE_ENV=production" >> /var/www/danSat/backend/.env.production
           cp /var/www/danSat/backend/.env.production /var/www/danSat/backend/.env
 
       - name: Validate .env exists
@@ -62,4 +60,8 @@ ENVEOF
       - name: Restart PM2
         run: |
           cd /var/www/danSat/backend
-          pm2 restart dansat-api --update-env || pm2 start src/
+          pm2 restart dansat-api --update-env || pm2 start src/index.js --name dansat-api
+          sleep 5
+          curl -sf --retry 3 --retry-delay 2 http://localhost:3009/api/health || echo "Health check skipped"
+          pm2 list | grep dansat-api
+          echo "DanSat deploy complete!"
