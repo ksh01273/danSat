@@ -44,15 +44,16 @@ jobs:
 
       - name: Create .env.production
         run: |
-          cat > /var/www/danSat/backend/.env.production <<EOF
-          PORT=3009
-          DB_HOST=192.168.10.55
-          DB_PORT=5432
-          DB_NAME=dansat
-          DB_USER=dangam_mcp_user
-          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          NODE_ENV=production
-          EOF
+          cat > /var/www/danSat/backend/.env.production <<ENVEOF
+PORT=3009
+DB_HOST=192.168.10.55
+DB_PORT=5432
+DB_NAME=dansat
+DB_USER=dangam_mcp_user
+DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+NODE_ENV=production
+ENVEOF
+          cp /var/www/danSat/backend/.env.production /var/www/danSat/backend/.env
 
       - name: Validate .env exists
         run: |
