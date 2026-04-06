@@ -1,0 +1,30 @@
+{
+  "name": "dangam-tailwind",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Dangam Corp. 통합 Tailwind CSS 프리셋 - 모든 단감 서비스 공용",
+  "main": "src/preset.js",
+  "exports": {
+    ".": "./src/preset.js",
+    "./preset": "./src/preset.js",
+    "./plugin": "./src/plugin.js",
+    "./css": "./src/dangam-ds.css"
+  },
+  "files": [
+    "src/"
+  ],
+  "keywords": [
+    "dangam",
+    "tailwind",
+    "preset",
+    "design-system"
+  ],
+  "author": "Dangam Corp.",
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "tailwindcss": ">=3.4.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}

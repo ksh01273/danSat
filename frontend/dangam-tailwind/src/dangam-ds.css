@@ -1,0 +1,105 @@
+/**
+ * @file Dangam Design System - CSS 토큰 정의
+ * @description Tailwind 프리셋과 함께 사용하는 CSS Custom Properties
+ *
+ * 사용법 (각 프로젝트 메인 CSS):
+ *   @import 'dangam-tailwind/css';
+ *   @tailwind base;
+ *   @tailwind components;
+ *   @tailwind utilities;
+ *
+ *   :root {
+ *     --dan-accent: #0ea5e9;         (프로젝트 색상 오버라이드)
+ *     --dan-accent-light: #38bdf8;
+ *     --dan-accent-dark: #0284c7;
+ *     --dan-accent-alpha: rgba(14, 165, 233, 0.15);
+ *   }
+ */
+
+/* ─── Pretendard 폰트 ─── */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+
+/* ============================================================
+   디자인 토큰 (CSS Custom Properties)
+   ============================================================ */
+:root {
+  /* ── 브랜드 컬러 (단감 오렌지) ── */
+  --dan-brand: #ff7f00;
+  --dan-brand-light: #ff9b3d;
+  --dan-brand-dark: #e06d00;
+  --dan-brand-alpha: rgba(255, 127, 0, 0.15);
+
+  /* ── 프로젝트 액센트 (각 프로젝트에서 오버라이드) ── */
+  --dan-accent: var(--dan-brand);
+  --dan-accent-light: var(--dan-brand-light);
+  --dan-accent-dark: var(--dan-brand-dark);
+  --dan-accent-alpha: var(--dan-brand-alpha);
+
+  /* ── 뉴트럴 팔레트 ── */
+  --dan-gray-50: #f9fafb;
+  --dan-gray-100: #f3f4f6;
+  --dan-gray-200: #e5e7eb;
+  --dan-gray-300: #d1d5db;
+  --dan-gray-400: #9ca3af;
+  --dan-gray-500: #6b7280;
+  --dan-gray-600: #4b5563;
+  --dan-gray-700: #374151;
+  --dan-gray-800: #1f2937;
+  --dan-gray-900: #111827;
+  --dan-gray-950: #030712;
+
+  /* ── 시맨틱 컬러 ── */
+  --dan-success: #10b981;
+  --dan-warning: #f59e0b;
+  --dan-error: #ef4444;
+  --dan-info: #3b82f6;
+
+  /* ── 폰트 ── */
+  --dan-font: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --dan-font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  /* ── 폰트 사이즈 ── */
+  --dan-text-xs: 0.75rem;
+  --dan-text-sm: 0.8125rem;
+  --dan-text-base: 0.875rem;
+  --dan-text-md: 1rem;
+  --dan-text-lg: 1.125rem;
+  --dan-text-xl: 1.25rem;
+  --dan-text-2xl: 1.5rem;
+  --dan-text-3xl: 1.875rem;
+
+  /* ── 스페이싱 ── */
+  --dan-space-xs: 0.25rem;
+  --dan-space-sm: 0.5rem;
+  --dan-space-md: 1rem;
+  --dan-space-lg: 1.5rem;
+  --dan-space-xl: 2rem;
+  --dan-space-2xl: 3rem;
+
+  /* ── 라운딩 ── */
+  --dan-radius-sm: 6px;
+  --dan-radius-md: 10px;
+  --dan-radius-lg: 16px;
+  --dan-radius-xl: 24px;
+  --dan-radius-full: 9999px;
+
+  /* ── 그림자 ── */
+  --dan-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --dan-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --dan-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --dan-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+
+  /* ── 트랜지션 ── */
+  --dan-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dan-duration: 200ms;
+  --dan-transition: var(--dan-duration) var(--dan-ease);
+
+  /* ── Z-index 스케일 ── */
+  --dan-z-base: 0;
+  --dan-z-above: 10;
+  --dan-z-sidebar: 100;
+  --dan-z-header: 200;
+  --dan-z-overlay: 300;
+  --dan-z-modal: 400;
+  --dan-z-toast: 500;
+}
