@@ -89,7 +89,7 @@
         <div class="stat-card glass-card">
           <Eye :size="18" class="stat-icon active" />
           <div class="stat-value">{{ visibleCount }}</div>
-          <div class="stat-label">가시 위성</div>
+          <div class="stat-label">궤도 계산</div>
         </div>
         <div class="stat-card glass-card">
           <Mountain :size="18" class="stat-icon" />
@@ -173,6 +173,41 @@
             <span class="detail-value">반경 {{ footprintZones.el45.toFixed(0) }} km</span>
           </div>
 
+          <!-- 패스 예측 -->
+          <div class="detail-section-title">
+            <CalendarClock :size="12" style="display:inline; vertical-align:middle" />
+            패스 예측 <span class="observer-label">({{ observerName }}, 앞 24h, 앙각 5° 이상)</span>
+          </div>
+          <div v-if="passesLoading" class="passes-loading">
+            <Loader2 :size="13" class="spin" /> 계산 중...
+          </div>
+          <div v-else-if="passes.length === 0 && !passesLoading" class="passes-empty">
+            예측된 패스 없음 (앙각 5° 미만)
+          </div>
+          <div v-else class="passes-list">
+            <div v-for="(p, i) in passes" :key="i" class="pass-row">
+              <div class="pass-num">{{ i + 1 }}</div>
+              <div class="pass-times">
+                <div class="pass-time-row">
+                  <span class="pass-time-label">상승</span>
+                  <span class="pass-time-val">{{ formatPassKST(p.riseTime) }} KST</span>
+                </div>
+                <div class="pass-time-row">
+                  <span class="pass-time-label">최대</span>
+                  <span :class="['pass-time-val', p.peakElevation > 45 ? 'high-el' : p.peakElevation > 20 ? 'mid-el' : '']">
+                    {{ formatPassKST(p.peakTime) }} KST
+                    <span class="pass-el">({{ p.peakElevation.toFixed(1) }}°)</span>
+                  </span>
+                </div>
+                <div class="pass-time-row">
+                  <span class="pass-time-label">하강</span>
+                  <span class="pass-time-val">{{ formatPassKST(p.setTime) }} KST</span>
+                </div>
+              </div>
+              <div class="pass-dur">{{ passDuration(p.riseTime, p.setTime) }}</div>
+            </div>
+          </div>
+
           <!-- 궤도 요소 -->
           <div class="detail-section-title">궤도 요소</div>
           <div class="detail-row">
@@ -199,7 +234,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, inject, nextTick } from 'vue';
-import { Satellite, Eye, Mountain, Gauge, X, MapPin } from 'lucide-vue-next';
+import { Satellite, Eye, Mountain, Gauge, X, MapPin, CalendarClock, Loader2 } from 'lucide-vue-next';
 import SatelliteSidebar from '../components/SatelliteSidebar.vue';
 // OpenLayers
 import OlMap from 'ol/Map.js';
@@ -235,6 +270,10 @@ const loading = ref(false);
 const positions = ref({});
 const lookAngles = ref(null);
 const footprintZones = ref(null);
+
+// 패스 예측
+const passes = ref([]);
+const passesLoading = ref(false);
 
 // 관측자 위치 (기본: 서울)
 const observerPos = ref({ lat: 37.5665, lng: 126.9780, alt: 0.038 }); // alt in km
@@ -906,6 +945,58 @@ function updateLookAngles() {
 }
 
 // =============================
+//  패스 예측
+// =============================
+
+/**
+ * ISO 8601 시각 → KST 표시 (MM/DD HH:mm KST)
+ */
+function formatPassKST(isoString) {
+  if (!isoString) return '-';
+  const d = new Date(isoString);
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const M = String(kst.getUTCMonth() + 1).padStart(2, '0');
+  const D = String(kst.getUTCDate()).padStart(2, '0');
+  const H = String(kst.getUTCHours()).padStart(2, '0');
+  const m = String(kst.getUTCMinutes()).padStart(2, '0');
+  return `${M}/${D} ${H}:${m}`;
+}
+
+/**
+ * 패스 지속 시간 계산 (상승~하강)
+ */
+function passDuration(rise, set) {
+  if (!rise || !set) return '-';
+  const sec = Math.round((new Date(set) - new Date(rise)) / 1000);
+  if (sec >= 60) return `${Math.floor(sec / 60)}분 ${sec % 60}초`;
+  return `${sec}초`;
+}
+
+/**
+ * 선택된 위성의 패스 예측 API 호출
+ */
+async function fetchPasses() {
+  if (!selectedSat.value) return;
+  const noradId = selectedSat.value.NORAD_CAT_ID;
+  const obs = observerPos.value;
+  passes.value = [];
+  passesLoading.value = true;
+  try {
+    const res = await fetch(
+      `/api/satellites/${noradId}/passes?lat=${obs.lat.toFixed(6)}&lng=${obs.lng.toFixed(6)}&alt=${obs.alt.toFixed(3)}&hours=24&minEl=5`
+    );
+    const json = await res.json();
+    if (json.success) {
+      passes.value = json.data.passes;
+    }
+  } catch (err) {
+    console.error('[DanSat] 패스 예측 오류:', err);
+  } finally {
+    passesLoading.value = false;
+  }
+}
+
+// =============================
 //  2D 지도 업데이트
 // =============================
 function updateMapFeatures() {
@@ -998,6 +1089,8 @@ function clearSelection() {
   selectedPos.value = null;
   lookAngles.value = null;
   footprintZones.value = null;
+  passes.value = [];
+  passesLoading.value = false;
   orbitSource?.clear();
   footprintSource?.clear();
   if (footprintGroup) { while (footprintGroup.children.length) { const c = footprintGroup.children[0]; c.geometry?.dispose(); c.material?.dispose(); footprintGroup.remove(c); } }
@@ -1011,6 +1104,9 @@ function onSelectSat(sat) {
 
   // 관측각 계산
   updateLookAngles();
+
+  // 패스 예측 시작
+  fetchPasses();
 
   if (props.mapMode === '2d') {
     drawOrbit(sat);
@@ -1097,5 +1193,55 @@ function onSelectSat(sat) {
   .stat-card { padding: 8px 10px; min-width: 65px; }
   .stat-value { font-size: 14px; }
   .detail-panel { top: auto; bottom: 80px; right: 8px; left: 8px; width: auto; max-height: 50%; }
+}
+
+/* 스핀 애니메이션 */
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 패스 예측 */
+.passes-loading {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--text-muted);
+  padding: 8px 0;
+}
+.passes-empty {
+  font-size: 11px; color: var(--text-muted);
+  padding: 8px 0; text-align: center;
+}
+.passes-list {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
+}
+.pass-row {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: rgba(124, 58, 237, 0.04);
+  border: 1px solid rgba(124, 58, 237, 0.08);
+}
+.pass-num {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent-bg); border: 1px solid var(--border-active);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: var(--accent-light);
+  flex-shrink: 0; margin-top: 2px;
+}
+.pass-times { flex: 1; }
+.pass-time-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1.5px 0;
+}
+.pass-time-label {
+  font-size: 10px; color: var(--text-muted); min-width: 24px;
+}
+.pass-time-val {
+  font-size: 11px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.pass-time-val.high-el { color: var(--status-active); font-weight: 600; }
+.pass-time-val.mid-el  { color: var(--status-warning); }
+.pass-el { color: var(--text-muted); font-size: 10px; margin-left: 3px; }
+.pass-dur {
+  font-size: 10px; color: var(--text-muted);
+  white-space: nowrap; padding-top: 2px; align-self: center;
 }
 </style>

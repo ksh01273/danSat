@@ -51,6 +51,9 @@ jobs:
           echo "DB_USER=dangam_mcp_user" >> /var/www/danSat/backend/.env.production
           echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> /var/www/danSat/backend/.env.production
           echo "NODE_ENV=production" >> /var/www/danSat/backend/.env.production
+          echo "COLLECT_DB_HOST=192.168.10.55" >> /var/www/danSat/backend/.env.production
+          echo "COLLECT_DB_PORT=5432" >> /var/www/danSat/backend/.env.production
+          echo "COLLECT_DB_NAME=dancollect" >> /var/www/danSat/backend/.env.production
           cp /var/www/danSat/backend/.env.production /var/www/danSat/backend/.env
 
       - name: Validate .env exists
@@ -61,7 +64,9 @@ jobs:
         run: |
           cd /var/www/danSat/backend
           pm2 restart dansat-api --update-env || pm2 start src/index.js --name dansat-api
+          pm2 restart dansat-collector --update-env || pm2 start src/services/daemon.js --name dansat-collector
           sleep 5
           curl -sf --retry 3 --retry-delay 2 http://localhost:3009/api/health || echo "Health check skipped"
-          pm2 list | grep dansat-api
+          pm2 list | grep dansat
+          pm2 save
           echo "DanSat deploy complete!"
