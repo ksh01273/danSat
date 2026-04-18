@@ -12,6 +12,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+
+      # ── 정적 JS 구문 검사 (DAN-10: public/*.js 런타임 SyntaxError 재발 방지) ──
+      - name: Syntax check frontend/public/*.js
+        shell: bash
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(frontend/public/*.js)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No static JS files under frontend/public — skipping"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "node --check $f"
+            node --check "$f"
+          done
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
