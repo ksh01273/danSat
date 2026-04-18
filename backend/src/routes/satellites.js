@@ -296,6 +296,7 @@ router.get('/:noradId/passes', async (req, res) => {
     const alt = parseFloat(req.query.alt || '0');
     const hours = Math.min(parseInt(req.query.hours || '24'), 72);
     const minEl = parseFloat(req.query.minEl || '5');
+    const maxPasses = Math.min(Math.max(parseInt(req.query.maxPasses || '10'), 1), 50);
 
     const data = await fetchCelestrakTle(`CATNR=${noradId}`);
     if (data.length === 0) {
@@ -307,7 +308,7 @@ router.get('/:noradId/passes', async (req, res) => {
 
     const sat = data[0];
     const satrec = createSatrec(sat.TLE_LINE1, sat.TLE_LINE2);
-    const passes = predictPasses(satrec, { lat, lng, alt }, hours, minEl);
+    const passes = predictPasses(satrec, { lat, lng, alt }, hours, minEl, maxPasses);
 
     res.json({
       success: true,
@@ -317,6 +318,7 @@ router.get('/:noradId/passes', async (req, res) => {
         observer: { lat, lng, alt },
         hoursAhead: hours,
         minElevation: minEl,
+        maxPasses,
         passes,
         count: passes.length,
       }
