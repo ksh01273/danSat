@@ -89,7 +89,7 @@
         <div class="stat-card glass-card">
           <Eye :size="18" class="stat-icon active" />
           <div class="stat-value">{{ visibleCount }}</div>
-          <div class="stat-label">궤도 계산</div>
+          <div class="stat-label">관측 가능</div>
         </div>
         <div class="stat-card glass-card">
           <Mountain :size="18" class="stat-icon" />
@@ -323,7 +323,10 @@ function getOrbitColor(mm) { return ORBIT_CONFIG[getOrbitType(mm)].color; }
 function getOrbitLabel(mm) { return ORBIT_CONFIG[getOrbitType(mm)].label; }
 
 // 통계
-const visibleCount = computed(() => Object.values(positions.value).filter(p => p.alt > 0).length);
+// visibleCount: 관측자 앙각(elevation) ≥ 0° 인 위성만 카운트 (수평선 위에 있는 위성)
+// - 이전 구현: p.alt > 0 → 위성 고도는 항상 양수라 전체 수와 동일 (버그)
+// - 수정: updateMapFeatures/update3DSatellites에서 ecfToLookAngles 계산 후 p.visible 주입
+const visibleCount = computed(() => Object.values(positions.value).filter(p => p.visible).length);
 const avgAltitude = computed(() => {
   const v = Object.values(positions.value);
   return v.length ? Math.round(v.reduce((s, p) => s + p.alt, 0) / v.length) : 0;
@@ -799,7 +802,7 @@ function update3DSatellites() {
 
   satellites.value.forEach(sat => {
     const satrec = gpToSatrec(sat); if (!satrec) return;
-    const pos = calcPosition(satrec, now); if (!pos) return;
+    const pos = calcPositionAndVisible(satrec, observerPos.value, now); if (!pos) return;
     newPos[sat.NORAD_CAT_ID] = pos;
     const type = getOrbitType(sat.MEAN_MOTION), isSel = selectedSat.value?.NORAD_CAT_ID === sat.NORAD_CAT_ID;
     const mesh = create3DSatMesh(type, isSel);
@@ -932,6 +935,43 @@ function calcPosition(satrec, date = new Date()) {
   };
 }
 
+/**
+ * 위성 위치 + 관측자 가시성 동시 계산
+ * 단일 SGP4 propagate 호출로 position과 lookAngles를 함께 계산해 부하를 최소화한다.
+ *
+ * @param {Object} satrec
+ * @param {Object|null} obs - { lat, lng, alt(km) } 또는 null
+ * @param {Date} date
+ * @returns {{lat, lng, alt, speed, visible, elevation}|null}
+ */
+function calcPositionAndVisible(satrec, obs, date = new Date()) {
+  const pv = satellite.propagate(satrec, date);
+  if (!pv.position || typeof pv.position === 'boolean') return null;
+  const gmst = satellite.gstime(date);
+  const gd = satellite.eciToGeodetic(pv.position, gmst);
+  const result = {
+    lat: satellite.degreesLat(gd.latitude),
+    lng: satellite.degreesLong(gd.longitude),
+    alt: gd.height,
+    speed: Math.sqrt(pv.velocity.x ** 2 + pv.velocity.y ** 2 + pv.velocity.z ** 2),
+    visible: false,
+    elevation: null,
+  };
+  if (obs) {
+    const obsGd = {
+      longitude: obs.lng / DEG,
+      latitude: obs.lat / DEG,
+      height: obs.alt || 0,
+    };
+    const posEcf = satellite.eciToEcf(pv.position, gmst);
+    const la = satellite.ecfToLookAngles(obsGd, posEcf);
+    const elDeg = la.elevation * DEG;
+    result.elevation = elDeg;
+    result.visible = elDeg >= 0;
+  }
+  return result;
+}
+
 function calcOrbitPath(satrec, mm) {
   const p = 1440 / mm, pts = [], now = new Date(), step = Math.max(1, Math.floor(p / 120));
   for (let i = 0; i < p; i += step) { const t = new Date(now.getTime() + i * 60000); const pos = calcPosition(satrec, t); if (pos) pts.push([pos.lng, pos.lat]); }
@@ -1006,7 +1046,7 @@ function updateMapFeatures() {
 
   satellites.value.forEach(sat => {
     const satrec = gpToSatrec(sat); if (!satrec) return;
-    const pos = calcPosition(satrec, now); if (!pos) return;
+    const pos = calcPositionAndVisible(satrec, observerPos.value, now); if (!pos) return;
     newPos[sat.NORAD_CAT_ID] = pos;
     const isSel = selectedSat.value?.NORAD_CAT_ID === sat.NORAD_CAT_ID;
     const feature = new Feature({ geometry: new Point(fromLonLat([pos.lng, pos.lat])), satData: sat });

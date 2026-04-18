@@ -114,56 +114,99 @@ function getLookAngles(satrec, observer, date = new Date()) {
 
 /**
  * 위성 패스 예측: 특정 위치에서 가시 시간대 계산
+ *
+ * 알고리즘:
+ *   1) 30초 간격 coarse scan으로 상승/하강 edge 탐지
+ *   2) edge 구간을 1초 정밀도로 binary-search bisect → 상승/하강 시각 오차 ±1초
+ *   3) GEO 등 장시간 가시 위성의 패스 폭주를 막기 위해 maxPasses 상한 적용
+ *
  * @param {Object} satrec
  * @param {Object} observer - { lat, lng, alt }
  * @param {number} hoursAhead - 앞으로 몇 시간 예측 (기본 24)
  * @param {number} minElevation - 최소 앙각 (기본 5°)
+ * @param {number} maxPasses - 반환 패스 개수 상한 (기본 10, GEO 보호용)
  * @returns {Array<Object>} [{ riseTime, peakTime, setTime, peakElevation, peakAzimuth }]
  */
-function predictPasses(satrec, observer, hoursAhead = 24, minElevation = 5) {
-  const passes = [];
-  const stepSec = 30; // 30초 간격 스캔
+function predictPasses(satrec, observer, hoursAhead = 24, minElevation = 5, maxPasses = 10) {
+  const COARSE_SEC = 30;
+  const FINE_SEC = 1;
   const start = new Date();
   const end = new Date(start.getTime() + hoursAhead * 3600 * 1000);
 
-  let inPass = false;
-  let currentPass = { riseTime: null, peakTime: null, setTime: null, peakElevation: -90, peakAzimuth: 0 };
+  const laAt = (ms) => getLookAngles(satrec, observer, new Date(ms));
 
-  for (let t = start.getTime(); t <= end.getTime(); t += stepSec * 1000) {
-    const date = new Date(t);
-    const la = getLookAngles(satrec, observer, date);
-    if (!la) continue;
-
-    if (la.elevation > minElevation) {
-      if (!inPass) {
-        // 패스 시작
-        inPass = true;
-        currentPass = {
-          riseTime: date.toISOString(),
-          peakTime: date.toISOString(),
-          setTime: null,
-          peakElevation: la.elevation,
-          peakAzimuth: la.azimuth,
-        };
-      }
-      if (la.elevation > currentPass.peakElevation) {
-        currentPass.peakElevation = la.elevation;
-        currentPass.peakAzimuth = la.azimuth;
-        currentPass.peakTime = date.toISOString();
-      }
-    } else {
-      if (inPass) {
-        // 패스 종료
-        currentPass.setTime = date.toISOString();
-        currentPass.peakElevation = Math.round(currentPass.peakElevation * 100) / 100;
-        currentPass.peakAzimuth = Math.round(currentPass.peakAzimuth * 100) / 100;
-        passes.push({ ...currentPass });
-        inPass = false;
-      }
+  /**
+   * 두 샘플 사이의 threshold 교차 지점을 1초 정밀도로 bisect.
+   * wantAbove=true  → 최초로 elevation > minElevation 이 되는 ms (rise)
+   * wantAbove=false → 최초로 elevation <= minElevation 이 되는 ms (set)
+   */
+  const bisect = (t0Ms, t1Ms, wantAbove) => {
+    let lo = t0Ms, hi = t1Ms;
+    while (hi - lo > FINE_SEC * 1000) {
+      const mid = Math.floor((lo + hi) / 2);
+      const la = laAt(mid);
+      const above = la ? (la.elevation > minElevation) : false;
+      if (above === wantAbove) hi = mid;
+      else lo = mid;
     }
+    return hi;
+  };
+
+  const passes = [];
+  let inPass = false;
+  let currentPass = null;
+  let prev = null; // { ms, elevation }
+
+  for (let t = start.getTime(); t <= end.getTime(); t += COARSE_SEC * 1000) {
+    const la = laAt(t);
+    if (!la) { prev = null; continue; }
+    const above = la.elevation > minElevation;
+
+    // 상승 edge: 직전에 below였고 현재 above
+    if (above && !inPass) {
+      const riseMs = prev ? bisect(prev.ms, t, true) : t;
+      const laRise = laAt(riseMs) || la;
+      inPass = true;
+      currentPass = {
+        riseTime: new Date(riseMs).toISOString(),
+        peakTime: new Date(riseMs).toISOString(),
+        setTime: null,
+        peakElevation: laRise.elevation,
+        peakAzimuth: laRise.azimuth,
+      };
+    }
+
+    // 패스 도중: peak 갱신 (coarse 30초 해상도 — rise/set 정밀도가 우선)
+    if (above && inPass && la.elevation > currentPass.peakElevation) {
+      currentPass.peakElevation = la.elevation;
+      currentPass.peakAzimuth = la.azimuth;
+      currentPass.peakTime = new Date(t).toISOString();
+    }
+
+    // 하강 edge: 직전에 above였고 현재 below
+    if (!above && inPass) {
+      const setMs = prev ? bisect(prev.ms, t, false) : t;
+      currentPass.setTime = new Date(setMs).toISOString();
+      currentPass.peakElevation = Math.round(currentPass.peakElevation * 100) / 100;
+      currentPass.peakAzimuth = Math.round(currentPass.peakAzimuth * 100) / 100;
+      passes.push({ ...currentPass });
+      inPass = false;
+      currentPass = null;
+      if (passes.length >= maxPasses) break;
+    }
+
+    prev = { ms: t, elevation: la.elevation };
   }
 
-  return passes;
+  // 윈도우 끝까지 패스 진행 중이면 end 시각으로 종료 처리 (GEO 등)
+  if (inPass && currentPass) {
+    currentPass.setTime = end.toISOString();
+    currentPass.peakElevation = Math.round(currentPass.peakElevation * 100) / 100;
+    currentPass.peakAzimuth = Math.round(currentPass.peakAzimuth * 100) / 100;
+    passes.push({ ...currentPass });
+  }
+
+  return passes.slice(0, maxPasses);
 }
 
 export { createSatrec, getPosition, getOrbitPath, getLookAngles, predictPasses };
