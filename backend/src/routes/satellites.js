@@ -83,6 +83,84 @@ async function fetchCelestrakTle(params) {
   return parseTleText(text);
 }
 
+/**
+ * DB(dancollect.dansat.tle_data)에서 TLE 행을 CelesTrak 응답 포맷으로 반환 (내부 헬퍼)
+ * @param {Object} opts
+ * @param {number} [opts.noradId]  — 단일 NORAD ID 조회 (norad_id = X)
+ * @param {string} [opts.nameQuery] — 이름 LIKE 검색 (대소문자 무시, 공백 제거)
+ * @param {string} [opts.category]  — category 컬럼 (group=stations/starlink/...)
+ * @param {number} [opts.limit]     — 결과 개수 제한 (기본 200, search 경로에서 50으로 덮어쓰기)
+ * @returns {Promise<Array>}        — CelesTrak parseTleText() 와 동일 스키마 배열
+ */
+async function getTleFromDb({ noradId, nameQuery, category, limit = 200 } = {}) {
+  const where = [];
+  const params = [];
+  let p = 0;
+
+  if (noradId !== undefined && noradId !== null && !isNaN(noradId)) {
+    params.push(parseInt(noradId, 10));
+    where.push(`norad_id = $${++p}`);
+  }
+  if (nameQuery) {
+    params.push(`%${nameQuery.trim()}%`);
+    where.push(`UPPER(name) LIKE UPPER($${++p})`);
+  }
+  if (category) {
+    params.push(category);
+    where.push(`category = $${++p}`);
+  }
+
+  if (where.length === 0) return [];
+
+  // norad_id 별 최신 TLE 1건(DISTINCT ON) + limit
+  params.push(limit);
+  const sql = `
+    SELECT DISTINCT ON (norad_id)
+      norad_id, name, tle_line1, tle_line2,
+      mean_motion, inclination, eccentricity,
+      ra_of_asc_node, arg_of_pericenter, mean_anomaly
+    FROM dansat.tle_data
+    WHERE ${where.join(' AND ')}
+    ORDER BY norad_id, epoch DESC NULLS LAST, collected_at DESC
+    LIMIT $${++p}
+  `;
+
+  const result = await collectPool.query(sql, params);
+  return result.rows.map(r => ({
+    OBJECT_NAME: r.name,
+    NORAD_CAT_ID: r.norad_id,
+    TLE_LINE1: r.tle_line1,
+    TLE_LINE2: r.tle_line2,
+    MEAN_MOTION: r.mean_motion !== null ? Number(r.mean_motion) : null,
+    INCLINATION: r.inclination !== null ? Number(r.inclination) : null,
+    ECCENTRICITY: r.eccentricity !== null ? Number(r.eccentricity) : null,
+    RA_OF_ASC_NODE: r.ra_of_asc_node !== null ? Number(r.ra_of_asc_node) : null,
+    ARG_OF_PERICENTER: r.arg_of_pericenter !== null ? Number(r.arg_of_pericenter) : null,
+    MEAN_ANOMALY: r.mean_anomaly !== null ? Number(r.mean_anomaly) : null,
+  }));
+}
+
+/**
+ * DB 우선 검색 후 결과 없으면 CelesTrak fallback (내부 헬퍼)
+ * 응답 포맷은 CelesTrak parseTleText() 와 동일
+ * @param {Object} opts  — getTleFromDb() 와 동일 + celestrakParams (fallback 용)
+ * @param {string} opts.celestrakParams — CATNR=123 / NAME=ISS / GROUP=stations 등
+ * @returns {Promise<{data: Array, source: 'db'|'celestrak'}>}
+ */
+async function fetchTleWithDbFirst(opts) {
+  try {
+    const dbRows = await getTleFromDb(opts);
+    if (dbRows.length > 0) {
+      return { data: dbRows, source: 'db' };
+    }
+  } catch (err) {
+    // DB 장애 시 CelesTrak 으로 graceful degrade
+    console.warn('[TLE DB lookup failed, fallback to CelesTrak]', err.message);
+  }
+  const live = await fetchCelestrakTle(opts.celestrakParams);
+  return { data: live, source: 'celestrak' };
+}
+
 // ======================
 //  기존 API
 // ======================
@@ -101,8 +179,13 @@ router.get('/categories', (req, res) => {
 router.get('/tle', async (req, res) => {
   try {
     const { group = 'stations' } = req.query;
-    const data = await fetchCelestrakTle(`GROUP=${group}`);
-    res.json({ success: true, data, count: data.length });
+    // DB 우선 — category 컬럼에 수집 시 GROUP 값이 그대로 저장돼 있음
+    const { data, source } = await fetchTleWithDbFirst({
+      category: group,
+      limit: 500,
+      celestrakParams: `GROUP=${group}`,
+    });
+    res.json({ success: true, data, count: data.length, source });
   } catch (err) {
     console.error('[TLE Fetch Error]', err.message);
     res.status(502).json({
@@ -126,9 +209,14 @@ router.get('/search', async (req, res) => {
       });
     }
 
-    const data = await fetchCelestrakTle(`NAME=${encodeURIComponent(q)}`);
+    // DB 우선 — name ILIKE %q% 로 검색 후 결과 0건 시 CelesTrak NAME= 로 fallback
+    const { data, source } = await fetchTleWithDbFirst({
+      nameQuery: q,
+      limit: 50,
+      celestrakParams: `NAME=${encodeURIComponent(q)}`,
+    });
     const limited = data.slice(0, 50);
-    res.json({ success: true, data: limited, count: limited.length });
+    res.json({ success: true, data: limited, count: limited.length, source });
   } catch (err) {
     console.error('[Search Error]', err.message);
     res.status(502).json({
@@ -145,7 +233,12 @@ router.get('/search', async (req, res) => {
 router.get('/norad/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const data = await fetchCelestrakTle(`CATNR=${id}`);
+    // DB 우선 — norad_id 정확 매칭 → 없을 때만 CelesTrak CATNR=
+    const { data, source } = await fetchTleWithDbFirst({
+      noradId: id,
+      limit: 1,
+      celestrakParams: `CATNR=${id}`,
+    });
 
     if (data.length === 0) {
       return res.status(404).json({
@@ -154,7 +247,7 @@ router.get('/norad/:id', async (req, res) => {
       });
     }
 
-    res.json({ success: true, data: data[0] });
+    res.json({ success: true, data: data[0], source });
   } catch (err) {
     console.error('[NORAD Fetch Error]', err.message);
     res.status(502).json({
@@ -180,8 +273,12 @@ router.get('/:noradId/position', async (req, res) => {
     const { noradId } = req.params;
     const time = req.query.time ? new Date(req.query.time) : new Date();
 
-    // CelesTrak에서 TLE 가져오기
-    const data = await fetchCelestrakTle(`CATNR=${noradId}`);
+    // DB 우선 (일일 수집 TLE) → 미수집이면 CelesTrak CATNR=
+    const { data } = await fetchTleWithDbFirst({
+      noradId,
+      limit: 1,
+      celestrakParams: `CATNR=${noradId}`,
+    });
     if (data.length === 0) {
       return res.status(404).json({
         success: false,
@@ -237,7 +334,11 @@ router.get('/:noradId/orbit', async (req, res) => {
     const duration = Math.min(parseInt(req.query.duration || '90'), 180);
     const step = Math.max(parseInt(req.query.step || '30'), 10);
 
-    const data = await fetchCelestrakTle(`CATNR=${noradId}`);
+    const { data } = await fetchTleWithDbFirst({
+      noradId,
+      limit: 1,
+      celestrakParams: `CATNR=${noradId}`,
+    });
     if (data.length === 0) {
       return res.status(404).json({
         success: false,
@@ -298,7 +399,11 @@ router.get('/:noradId/passes', async (req, res) => {
     const minEl = parseFloat(req.query.minEl || '5');
     const maxPasses = Math.min(Math.max(parseInt(req.query.maxPasses || '10'), 1), 50);
 
-    const data = await fetchCelestrakTle(`CATNR=${noradId}`);
+    const { data } = await fetchTleWithDbFirst({
+      noradId,
+      limit: 1,
+      celestrakParams: `CATNR=${noradId}`,
+    });
     if (data.length === 0) {
       return res.status(404).json({
         success: false,

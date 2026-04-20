@@ -80,7 +80,8 @@ jobs:
         run: |
           cd /var/www/danSat/backend
           pm2 restart dansat-api --update-env || pm2 start src/index.js --name dansat-api
-          pm2 restart dansat-collector --update-env || pm2 start src/services/daemon.js --name dansat-collector
+          # dansat-collector 는 2026-04-20 dancollect-daemon 으로 수렴됨 (dancollect-20260420-03).
+          # 여기서 재기동하지 않는다. 레거시 daemon.js 는 레포에 남아있지만 구동되지 않음.
           sleep 5
           curl -sf --retry 3 --retry-delay 2 http://localhost:3009/api/health || echo "Health check skipped"
           pm2 list | grep dansat
