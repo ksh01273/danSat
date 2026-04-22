@@ -84,7 +84,8 @@ async function fetchCelestrakTle(params) {
 }
 
 /**
- * DB(dancollect.dansat.tle_data)에서 TLE 행을 CelesTrak 응답 포맷으로 반환 (내부 헬퍼)
+ * DB(dancollect.satellite.tle_data)에서 TLE 행을 CelesTrak 응답 포맷으로 반환 (내부 헬퍼)
+ * 2026-04-22: migration 012 로 dansat.tle_data → satellite.tle_data 스키마 cutover 완료.
  * @param {Object} opts
  * @param {number} [opts.noradId]  — 단일 NORAD ID 조회 (norad_id = X)
  * @param {string} [opts.nameQuery] — 이름 LIKE 검색 (대소문자 무시, 공백 제거)
@@ -119,7 +120,7 @@ async function getTleFromDb({ noradId, nameQuery, category, limit = 200 } = {}) 
       norad_id, name, tle_line1, tle_line2,
       mean_motion, inclination, eccentricity,
       ra_of_asc_node, arg_of_pericenter, mean_anomaly
-    FROM dansat.tle_data
+    FROM satellite.tle_data
     WHERE ${where.join(' AND ')}
     ORDER BY norad_id, epoch DESC NULLS LAST, collected_at DESC
     LIMIT $${++p}
@@ -439,7 +440,7 @@ router.get('/:noradId/passes', async (req, res) => {
 
 /**
  * GET /api/satellites/collect/status
- * 수집 DB(dancollect.dansat.tle_data) 상태 조회
+ * 수집 DB(dancollect.satellite.tle_data) 상태 조회
  */
 router.get('/collect/status', async (req, res) => {
   try {
@@ -449,12 +450,12 @@ router.get('/collect/status', async (req, res) => {
         COUNT(*) as count,
         MAX(collected_at) as last_collected,
         MAX(epoch) as latest_epoch
-      FROM dansat.tle_data
+      FROM satellite.tle_data
       GROUP BY category
       ORDER BY category
     `);
 
-    const totalResult = await collectPool.query('SELECT COUNT(*) as total FROM dansat.tle_data');
+    const totalResult = await collectPool.query('SELECT COUNT(*) as total FROM satellite.tle_data');
 
     res.json({
       success: true,
