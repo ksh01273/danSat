@@ -1,11 +1,16 @@
 /**
- * @file TLE 데이터 수집기 — CelesTrak GP API → dancollect.dansat.tle_data
+ * @file TLE 데이터 수집기 — CelesTrak GP API → dancollect.satellite.tle_data
  * @project DanSat
  * @author Dangam Corp.
  *
  * CelesTrak에서 카테고리별 TLE 데이터를 가져와 dancollect DB의
- * dansat.tle_data 테이블에 UPSERT 한다.
- * 수집 주기: 1일 2회 (cron 06:00, 18:00 KST)
+ * satellite.tle_data 테이블에 UPSERT 한다.
+ * (2026-04-22 migration 012 로 dansat.tle_data → satellite.tle_data 스키마 cutover 완료.
+ *  이 수동 트리거 경로도 정규 테이블로 일치화 — 2026-04-24 `dansat-20260424-01`.)
+ *
+ * 수집 주기: 1일 2회 (cron 06:00, 18:00 KST) — 실제로는 dancollect-daemon 의
+ * `satellite.tle_data.daily` 잡이 스케줄 수집을 담당하고, 본 파일의 POST
+ * `/api/satellites/collect/run` 은 수동 긴급 트리거 용도로만 남겨둠.
  *
  * 사용법:
  *   node src/services/tleCollector.js          # 단독 실행 (1회 수집)
@@ -124,8 +129,9 @@ async function upsertTleData(records, category) {
   try {
     await client.query('BEGIN');
 
+    // 2026-04-22 migration 012 cutover: dansat.tle_data → satellite.tle_data
     const stmt = `
-      INSERT INTO dansat.tle_data
+      INSERT INTO satellite.tle_data
         (norad_id, name, tle_line1, tle_line2, epoch, classification,
          inclination, eccentricity, mean_motion, ra_of_asc_node,
          arg_of_pericenter, mean_anomaly, category, collected_at)
