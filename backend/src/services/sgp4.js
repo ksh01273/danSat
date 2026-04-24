@@ -19,7 +19,80 @@ import {
 } from 'satellite.js';
 
 const DEG = 180 / Math.PI;
+const RAD = Math.PI / 180;
 const R_EARTH = 6371; // km
+const AU_KM = 149597870.7; // 천문단위 (태양까지 거리)
+
+// -----------------------------------------------------------------------------
+// 저정밀 태양 위치 (ECI, km) — Jean Meeus "Astronomical Algorithms" ch.25 단순화판
+// 0.01° 수준 정확. 가시성 판정(어두움/일조)에는 충분.
+// -----------------------------------------------------------------------------
+function sunPositionEci(date) {
+  const jd = date.getTime() / 86400000 + 2440587.5;
+  const n  = jd - 2451545.0;
+  const T  = n / 36525;
+
+  // 평균 황경 / 평균 근점 이각 (deg)
+  const L = (280.460 + 0.9856474 * n) % 360;
+  const g = ((357.528 + 0.9856003 * n) % 360) * RAD;
+
+  // 황경 (deg) — 태양 방정식 반영
+  const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * RAD;
+  // 지구 궤도 이심률 근사
+  const R = (1.00014 - 0.01671 * Math.cos(g) - 0.00014 * Math.cos(2 * g)) * AU_KM;
+
+  // 황도경사각 (deg)
+  const eps = (23.4393 - 0.0130 * T) * RAD;
+
+  // 적도좌표계(J2000 ≈ ECI) 변환
+  return {
+    x: R * Math.cos(lambda),
+    y: R * Math.cos(eps) * Math.sin(lambda),
+    z: R * Math.sin(eps) * Math.sin(lambda),
+  };
+}
+
+/**
+ * 관측자 시점에서 태양이 지평선 아래 얼마나 있는지 (deg).
+ * 음수일수록 밤에 가까움. 시민박명 기준 -6°, 천문박명 기준 -18°.
+ */
+function sunElevationAtObserver(observer, date) {
+  const sun = sunPositionEci(date);
+  const gmst = gstime(date);
+  const sunEcf = eciToEcf(sun, gmst);
+  const obsGd = {
+    longitude: observer.lng * RAD,
+    latitude:  observer.lat * RAD,
+    height:    observer.alt || 0,
+  };
+  const la = ecfToLookAngles(obsGd, sunEcf);
+  return la.elevation * DEG;
+}
+
+/**
+ * 위성이 태양광에 비춰지고 있는지 (지구 그림자 밖에 있는지).
+ * 원통형 본영(umbra) 근사: 태양 반대방향 투영이 R_earth 보다 멀면 조명됨.
+ */
+function isSunlit(satPosEci, date) {
+  const sun = sunPositionEci(date);
+  const sunMag = Math.hypot(sun.x, sun.y, sun.z);
+  const sx = sun.x / sunMag, sy = sun.y / sunMag, sz = sun.z / sunMag; // 태양 방향 단위벡터
+
+  // 위성 벡터를 태양 방향과 "태양 반대방향에 수직인 평면"으로 분해
+  const dotSat = satPosEci.x * sx + satPosEci.y * sy + satPosEci.z * sz;
+
+  // dotSat > 0 이면 태양 쪽 — 항상 조명됨
+  if (dotSat > 0) return true;
+
+  // 태양 반대편: 지구 축에서의 수직거리 계산
+  const px = satPosEci.x - dotSat * sx;
+  const py = satPosEci.y - dotSat * sy;
+  const pz = satPosEci.z - dotSat * sz;
+  const perp = Math.hypot(px, py, pz);
+
+  // 수직거리가 지구 반경보다 크면 본영 바깥 → 조명
+  return perp > R_EARTH;
+}
 
 /**
  * TLE 라인으로부터 satrec 객체 생성
@@ -136,6 +209,23 @@ function predictPasses(satrec, observer, hoursAhead = 24, minElevation = 5, maxP
   const laAt = (ms) => getLookAngles(satrec, observer, new Date(ms));
 
   /**
+   * 특정 ms 시각에서 위성이 실제로 육안 관측 가능한지 계산.
+   *   - sunElObserver: 관측자 기준 태양 고도 (deg) — -6° 이하 = 시민박명 이후 (어두움)
+   *   - satSunlit:     위성이 지구 그림자 밖 (태양광 받음)
+   *   - visible:       관측자 어둡고 + 위성 조명 + 앙각 > minElevation
+   */
+  const computeVisibility = (ms) => {
+    const d = new Date(ms);
+    const pv = propagate(satrec, d);
+    if (!pv.position || typeof pv.position === 'boolean') {
+      return { sunElObserver: null, satSunlit: false, visible: false };
+    }
+    const sunElObserver = sunElevationAtObserver(observer, d);
+    const satSunlit = isSunlit(pv.position, d);
+    return { sunElObserver, satSunlit };
+  };
+
+  /**
    * 두 샘플 사이의 threshold 교차 지점을 1초 정밀도로 bisect.
    * wantAbove=true  → 최초로 elevation > minElevation 이 되는 ms (rise)
    * wantAbove=false → 최초로 elevation <= minElevation 이 되는 ms (set)
@@ -189,6 +279,18 @@ function predictPasses(satrec, observer, hoursAhead = 24, minElevation = 5, maxP
       currentPass.setTime = new Date(setMs).toISOString();
       currentPass.peakElevation = Math.round(currentPass.peakElevation * 100) / 100;
       currentPass.peakAzimuth = Math.round(currentPass.peakAzimuth * 100) / 100;
+
+      // peak 시각에 육안 관측 가능 여부 계산 (옵션이지만 거의 무료 — 한 번 더 propagate)
+      const peakMs = new Date(currentPass.peakTime).getTime();
+      const vis = computeVisibility(peakMs);
+      currentPass.sunElObserver = vis.sunElObserver != null
+        ? Math.round(vis.sunElObserver * 10) / 10
+        : null;
+      currentPass.satSunlit     = vis.satSunlit;
+      // 육안 관측 가능: 관측자 어두움 (시민박명 -6° 이하) + 위성이 태양광 받음
+      currentPass.visible = (vis.sunElObserver != null && vis.sunElObserver < -6)
+                         && vis.satSunlit;
+
       passes.push({ ...currentPass });
       inPass = false;
       currentPass = null;
@@ -203,10 +305,30 @@ function predictPasses(satrec, observer, hoursAhead = 24, minElevation = 5, maxP
     currentPass.setTime = end.toISOString();
     currentPass.peakElevation = Math.round(currentPass.peakElevation * 100) / 100;
     currentPass.peakAzimuth = Math.round(currentPass.peakAzimuth * 100) / 100;
+
+    const peakMs = new Date(currentPass.peakTime).getTime();
+    const vis = computeVisibility(peakMs);
+    currentPass.sunElObserver = vis.sunElObserver != null
+      ? Math.round(vis.sunElObserver * 10) / 10
+      : null;
+    currentPass.satSunlit = vis.satSunlit;
+    currentPass.visible = (vis.sunElObserver != null && vis.sunElObserver < -6)
+                       && vis.satSunlit;
+
     passes.push({ ...currentPass });
   }
 
   return passes.slice(0, maxPasses);
 }
 
-export { createSatrec, getPosition, getOrbitPath, getLookAngles, predictPasses };
+export {
+  createSatrec,
+  getPosition,
+  getOrbitPath,
+  getLookAngles,
+  predictPasses,
+  // 가시성 보조 유틸 (라우트/테스트에서 직접 호출 가능)
+  sunPositionEci,
+  sunElevationAtObserver,
+  isSunlit,
+};
