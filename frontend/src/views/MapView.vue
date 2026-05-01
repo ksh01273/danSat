@@ -176,7 +176,7 @@
           <!-- 패스 예측 -->
           <div class="detail-section-title">
             <CalendarClock :size="12" style="display:inline; vertical-align:middle" />
-            패스 예측 <span class="observer-label">({{ observerName }}, 앞 24h, 앙각 5° 이상)</span>
+            패스 예측 <span class="observer-label">({{ observerName }}, 앞 24h, 앙각 5° 이상 · <Eye :size="10" style="display:inline; vertical-align:middle" /> 육안 관측 가능 표시)</span>
           </div>
           <div v-if="passesLoading" class="passes-loading">
             <Loader2 :size="13" class="spin" /> 계산 중...
@@ -185,7 +185,7 @@
             예측된 패스 없음 (앙각 5° 미만)
           </div>
           <div v-else class="passes-list">
-            <div v-for="(p, i) in passes" :key="i" class="pass-row">
+            <div v-for="(p, i) in passes" :key="i" :class="['pass-row', { 'pass-visible': p.visible === true }]">
               <div class="pass-num">{{ i + 1 }}</div>
               <div class="pass-times">
                 <div class="pass-time-row">
@@ -202,6 +202,18 @@
                 <div class="pass-time-row">
                   <span class="pass-time-label">하강</span>
                   <span class="pass-time-val">{{ formatPassKST(p.setTime) }} KST</span>
+                </div>
+                <div v-if="p.sunElObserver !== undefined && p.sunElObserver !== null" class="pass-meta-row" :title="visibilityTooltip(p)">
+                  <span v-if="p.visible" class="pass-visible-badge">
+                    <Eye :size="11" /> 육안 관측 가능
+                  </span>
+                  <span v-else class="pass-invisible-reason">
+                    <EyeOff :size="11" /> {{ invisibleReason(p) }}
+                  </span>
+                  <span class="pass-meta-detail">
+                    {{ p.sunElObserver >= 0 ? '🌞' : '🌙' }} {{ p.sunElObserver.toFixed(1) }}°
+                    · {{ p.satSunlit ? '☀ 햇빛' : '🌑 그림자' }}
+                  </span>
                 </div>
               </div>
               <div class="pass-dur">{{ passDuration(p.riseTime, p.setTime) }}</div>
@@ -234,7 +246,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, inject, nextTick } from 'vue';
-import { Satellite, Eye, Mountain, Gauge, X, MapPin, CalendarClock, Loader2 } from 'lucide-vue-next';
+import { Satellite, Eye, EyeOff, Mountain, Gauge, X, MapPin, CalendarClock, Loader2 } from 'lucide-vue-next';
 import SatelliteSidebar from '../components/SatelliteSidebar.vue';
 // OpenLayers
 import OlMap from 'ol/Map.js';
@@ -1013,6 +1025,30 @@ function passDuration(rise, set) {
 }
 
 /**
+ * 육안 관측 불가 사유 분류 (SGP4 visible=false 인 경우)
+ *  - 시민박명 -6° 이상이면 "낮/박명" (관측자 위치가 아직/벌써 밝음)
+ *  - 그 외 위성이 지구 그림자 안이면 "위성 그림자"
+ *  - 둘 다 해당 안 되면 "관측 불가" (수치 경계 케이스)
+ */
+function invisibleReason(p) {
+  if (p == null) return '관측 불가';
+  if (typeof p.sunElObserver === 'number' && p.sunElObserver >= -6) return '낮/박명';
+  if (p.satSunlit === false) return '위성 그림자';
+  return '관측 불가';
+}
+
+/**
+ * 가시성 판정 툴팁 — 사용자에게 판정 근거 노출
+ */
+function visibilityTooltip(p) {
+  if (p == null) return '';
+  if (p.visible) return '관측자 시민박명(태양 -6°) 이하 + 위성이 햇빛 받음 → 육안 관측 가능 조건';
+  if (typeof p.sunElObserver === 'number' && p.sunElObserver >= -6) return '관측자 위치가 아직 충분히 어둡지 않음 (시민박명 -6° 미만 필요)';
+  if (p.satSunlit === false) return '위성이 지구 그림자(본영) 안 — 햇빛을 받지 못해 육안 보이지 않음';
+  return '관측 조건 불충족';
+}
+
+/**
  * 선택된 위성의 패스 예측 API 호출
  */
 async function fetchPasses() {
@@ -1257,6 +1293,11 @@ function onSelectSat(sat) {
   padding: 8px 10px; border-radius: var(--radius-sm);
   background: rgba(124, 58, 237, 0.04);
   border: 1px solid rgba(124, 58, 237, 0.08);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.pass-row.pass-visible {
+  background: rgba(34, 197, 94, 0.07);
+  border-color: rgba(34, 197, 94, 0.30);
 }
 .pass-num {
   width: 18px; height: 18px; border-radius: 50%;
@@ -1283,5 +1324,35 @@ function onSelectSat(sat) {
 .pass-dur {
   font-size: 10px; color: var(--text-muted);
   white-space: nowrap; padding-top: 2px; align-self: center;
+}
+/* 패스 가시성 메타 (sunElObserver / satSunlit / visible) */
+.pass-meta-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  padding-top: 4px; margin-top: 4px;
+  border-top: 1px dashed rgba(124, 58, 237, 0.12);
+  font-size: 10px;
+  cursor: help;
+}
+.pass-row.pass-visible .pass-meta-row {
+  border-top-color: rgba(34, 197, 94, 0.20);
+}
+.pass-visible-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+  padding: 2px 7px; border-radius: 9px;
+  font-weight: 600; letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.pass-invisible-reason {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--text-muted); font-weight: 500;
+  white-space: nowrap;
+}
+.pass-meta-detail {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 </style>
